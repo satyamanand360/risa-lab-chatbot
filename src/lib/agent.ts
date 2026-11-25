@@ -198,7 +198,7 @@ export async function weeklyTrend(asOf: string, campaignId: string | null) {
   return rows.map((r) => ({ week_start: r.week_start, new_registrations: r.new_registrations ?? 0, cancellations: r.cancellations ?? 0, new_attendees: r.new_attendees ?? 0, spend_inr: r.spend_inr ?? 0 }));
 }
 
-export type ChatResult = { text: string; toolsUsed: { name: string; summary: string }[]; proposals: Proposal[]; error?: string };
+export type ChatResult = { text: string; toolsUsed: { name: string; summary: string }[]; proposals: Proposal[]; error?: string; model?: string };
 
 // Gemini accepts an OpenAPI-style subset of JSON Schema: drop keywords it rejects.
 function toGeminiSchema(s: any): any {
@@ -252,6 +252,7 @@ async function generate(contents: Content[], system: string, key: string) {
       try {
         const body = await callModel(model, contents, system, key);
         workingModel = model;
+        body.__model = model;
         return body;
       } catch (e: any) {
         const timedOut = e?.name === "TimeoutError" || e?.name === "AbortError";
@@ -291,6 +292,7 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
   const toolsUsed: ChatResult["toolsUsed"] = [];
   let finalText = "";
   const system = systemPrompt(asOf, meta);
+  let usedModel: string | undefined;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let body: any;
@@ -307,6 +309,7 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
       const detail = lastFailures.length ? `\n\nModels tried:\n${lastFailures.map((f) => `- ${f}`).join("\n")}` : "";
       return { text: (finalText ? `${finalText}\n\n(${msg})` : msg) + detail, toolsUsed, proposals: ctx.proposals, error: "api" };
     }
+    if (body?.__model) usedModel = body.__model;
     const cand = body?.candidates?.[0];
     if (!cand?.content?.parts?.length) {
       const reason = body?.promptFeedback?.blockReason || cand?.finishReason;
@@ -343,9 +346,9 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
   for (const m of newContents) {
     await q(`INSERT INTO chat_messages (session_id, role, content, display) VALUES ($1,$2,$3,$4)`, [sessionId, m.role === "model" ? "assistant" : "user", JSON.stringify(m.parts), null]);
   }
-  const display = { role: "assistant_display", text: finalText, toolsUsed, proposals: ctx.proposals, asOf };
+  const display = { role: "assistant_display", text: finalText, toolsUsed, proposals: ctx.proposals, asOf, model: usedModel };
   await q(`INSERT INTO chat_messages (session_id, role, content, display) VALUES ($1,'display',$2,$3)`, [sessionId, JSON.stringify([]), JSON.stringify({ ...display, user: displayUser })]);
-  return { text: finalText, toolsUsed, proposals: ctx.proposals };
+  return { text: finalText, toolsUsed, proposals: ctx.proposals, model: usedModel };
 }
 
 export async function setProposalStatus(sessionId: string, proposalId: string, status: "confirmed" | "dismissed", resultNote: string) {

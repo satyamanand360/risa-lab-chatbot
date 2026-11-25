@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, fmtDate } from "@/lib/format";
 
 type Proposal = { id: string; kind: "task" | "campaign_change"; status: "pending" | "confirmed" | "dismissed"; payload: any; result?: string };
-type Turn = { user: string; text?: string; toolsUsed?: { name: string; summary: string }[]; proposals?: Proposal[]; asOf?: string; pending?: boolean; error?: boolean };
+type Turn = { user: string; text?: string; toolsUsed?: { name: string; summary: string }[]; proposals?: Proposal[]; asOf?: string; pending?: boolean; error?: boolean; model?: string };
 
 const SUGGESTIONS = [
   "Are we on track for the attendee goal? What's the gap and why?",
@@ -74,7 +74,7 @@ export default function Chat({ asOf, onClose, pendingPrompt, clearPending, onDat
     try {
       const notes = notesRef.current; notesRef.current = [];
       const r = await api<any>("/api/chat", { method: "POST", body: JSON.stringify({ sessionId, message: msg, asOf, notes }) });
-      setTurns((t) => [...t.slice(0, -1), { user: msg, text: r.text, toolsUsed: r.toolsUsed, proposals: r.proposals, asOf, error: !!r.error }]);
+      setTurns((t) => [...t.slice(0, -1), { user: msg, text: r.text, toolsUsed: r.toolsUsed, proposals: r.proposals, asOf, error: !!r.error, model: r.model }]);
     } catch (e: any) {
       setTurns((t) => [...t.slice(0, -1), { user: msg, text: e.message || "Request failed.", error: true, asOf }]);
     } finally { setBusy(false); }
@@ -115,7 +115,7 @@ export default function Chat({ asOf, onClose, pendingPrompt, clearPending, onDat
             {t.pending ? <div className="msg assistant muted">Analysing the data…</div> : (
               <div className="msg assistant">
                 <div dangerouslySetInnerHTML={{ __html: renderMarkdown(t.text || "") }} />
-                {!!t.toolsUsed?.length && <div className="tools-used">Data checked: {t.toolsUsed.map((u) => u.name.replace(/_/g, " ") + (u.summary ? ` (${u.summary})` : "")).join(" · ")}</div>}
+                {(!!t.toolsUsed?.length || t.model) && <div className="tools-used">{!!t.toolsUsed?.length && <>Data checked: {t.toolsUsed.map((u) => u.name.replace(/_/g, " ") + (u.summary ? ` (${u.summary})` : "")).join(" · ")}</>}{t.model && <>{t.toolsUsed?.length ? " · " : ""}Model: {t.model}</>}</div>}
               </div>
             )}
             {t.proposals?.map((p) => (
