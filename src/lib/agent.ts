@@ -252,14 +252,14 @@ async function callModel(model: string, contents: Content[], system: string, key
   return body;
 }
 
-async function generate(contents: Content[], system: string, key: string) {
+async function generate(contents: Content[], system: string, key: string, deadline: number) {
   const configured = process.env.GEMINI_MODEL?.trim();
   const order = [...new Set([workingModel, configured, ...DEFAULT_MODELS].filter(Boolean) as string[])];
   let lastErr: unknown;
   lastFailures = [];
-  const started = Date.now();
   for (const model of order) {
-    if (Date.now() - started > 120_000) break;
+    // Stay inside the hosting platform's time limit: a killed request shows the user nothing.
+    if (Date.now() + CALL_TIMEOUT_MS > deadline) { lastFailures.push(`${model}: skipped, out of time`); break; }
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const body = await callModel(model, contents, system, key);
@@ -306,18 +306,22 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
   let finalText = "";
   const system = systemPrompt(asOf, meta);
   let usedModel: string | undefined;
+  const deadline = Date.now() + 240_000; // the chat route allows 300 s
 
   for (let step = 0; step < MAX_STEPS; step++) {
     let body: any;
     try {
-      body = await generate(contents, system, key);
+      body = await generate(contents, system, key, deadline);
     } catch (e) {
       console.error(e, lastFailures);
-      const st = e instanceof GeminiError ? e.status : 0;
+      let st = e instanceof GeminiError ? e.status : 0;
+      // Report the most telling failure: overload or quota beats a 404 from the last, retired model.
+      if (lastFailures.some((f) => / (429) /.test(f))) st = 429;
+      else if (lastFailures.some((f) => / (500|502|503|504) /.test(f))) st = 503;
       const msg = st === 429 ? "The free Gemini quota is used up for the moment. Wait a minute and try again."
         : st === 400 && /api key/i.test((e as Error).message) ? "The GEMINI_API_KEY on the server was rejected."
         : st === 401 || st === 403 ? "The GEMINI_API_KEY on the server was rejected or lacks access to this model."
-        : st >= 500 ? "Gemini is overloaded right now on every model this app tries. Wait a minute and ask again."
+        : st >= 500 ? "Google's free Gemini service is overloaded right now on every model this app tries. Wait a minute and ask again."
         : st ? `The AI service returned an error (${st}).` : "Couldn't reach the AI service.";
       const detail = lastFailures.length ? `\n\nModels tried:\n${lastFailures.map((f) => `- ${f}`).join("\n")}` : "";
       return { text: (finalText ? `${finalText}\n\n(${msg})` : msg) + detail, toolsUsed, proposals: ctx.proposals, error: "api" };
