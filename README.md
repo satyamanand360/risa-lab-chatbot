@@ -2,6 +2,9 @@
 
 RISA Labs Growth APM assignment by **Satyam Anand (22IE35003)**. **Challenge A (attendee growth)**, city **Bengaluru**.
 
+- **Live app:** https://risa-lab-chatbot-ten.vercel.app
+- **Code:** https://github.com/satyamanand360/risa-lab-chatbot
+
 The submission has three parts:
 
 1. **Strategy deck (3 slides, PDF).** In [`docs/Satyam_Anand_RISA_Growth_APM_Part1.pdf`](docs/Satyam_Anand_RISA_Growth_APM_Part1.pdf), with the funnel model script in [`docs/funnel_model.py`](docs/funnel_model.py). The target and the model, five ranked bets, and the signals and thresholds for each bet.
@@ -135,7 +138,7 @@ npm test                       # data and tool checks on a throwaway database
 ```
 
 - **Database:** without `DATABASE_URL`, the app uses an embedded Postgres (PGlite) in `.data/`, seeded on first start. For a hosted deployment, set `DATABASE_URL` to any Postgres (Neon, Supabase, Vercel Postgres); the schema and seed load automatically. **Log results → Reset demo data** restores the original dataset.
-- **Deploy (Vercel):** import the repo, add `GEMINI_API_KEY` and `DATABASE_URL`, and deploy. Without `DATABASE_URL` on Vercel the database lives in memory and resets when the server restarts.
+- **Deploy (Vercel):** import the repo, add a Neon Postgres database under Storage (this sets `DATABASE_URL`), add `GEMINI_API_KEY`, and deploy. The first request loads the seed, which takes about a minute. Without `DATABASE_URL` on Vercel the database lives in memory and resets when the server restarts.
 - **Regenerate the seed:** `python3 scripts/export_seed.py "<path>/Attendee Dataset.xlsx" seed/attendee_seed.json`
 
 ## 6. Testing
@@ -147,9 +150,10 @@ npm test                       # data and tool checks on a throwaway database
 - every analyst tool, including that `run_sql` rejects writes, including a write hidden in a CTE;
 - the plan presets reproduce 2,501 and 3,743;
 - a proposal doesn't write anything;
-- logging spend, a registration and a check-in each changes the analytics on the right dates.
+- logging spend, a registration and a check-in each changes the analytics on the right dates;
+- the Gemini tool loop against a local mock of the API: a tool call and its result, follow-up history, thought signatures sent back unchanged, and falling back past an overloaded or retired model.
 
-The UI was checked page by page in a headless browser. The chatbot's live answers need an API key, so they are tested on the deployed app.
+The UI was checked page by page in a headless browser. On the deployed app (25 Nov 2026) I checked that task, campaign and spend edits persist after a refresh and change the analytics, and that the analyst answers correctly: the worst cost per attendee (Creator Partners, ₹337), a follow-up that refers back to it, an unanswerable question (college names), and a proposed task that becomes a real task once confirmed.
 
 ## 7. Tools used
 
@@ -163,4 +167,5 @@ Next.js 15, React 19, TypeScript, Recharts, PostgreSQL (`pg`) or PGlite, the Goo
 - The pre-event projection uses an assumed show rate. The run-rate method ignores late-registration surges, which the 2025 data shows in the final two weeks.
 - There is no authentication: anyone with the link can edit data. Use **Reset demo data** to restore it.
 - Without a hosted database, the Vercel deployment resets on cold starts.
-- The chatbot depends on the Gemini API being available. The free tier has low per-minute and per-day request limits, and one question can take 2 to 5 model calls because of tool use, so heavy testing can hit the quota for a minute. The app also limits chat requests per IP.
+- The chatbot depends on Google's free Gemini tier. During testing every free model sometimes returned "high demand" errors; the chat then says so and asks the user to try again a minute later. One question can take 2 to 5 model calls because of tool use, so heavy testing can also hit the per-minute quota. A paid Gemini key removes most of this. The app also limits chat requests per IP.
+- Answers take roughly 10 to 30 seconds, mostly model time plus round trips to the hosted database.
