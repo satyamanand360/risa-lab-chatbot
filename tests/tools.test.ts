@@ -72,6 +72,7 @@ const run = (n: string, i: any = {}) => execTool(n, i, ctx) as Promise<any>;
   assert.equal(chat.text, "Attendees: 2051"); assert.equal(chat.toolsUsed[0].name, "get_overview");
   assert.equal(seen.length, 2); assert.equal(seen[0].key, "test-key"); assert.match(seen[0].url, /gemini-3\.5-flash-lite:generateContent$/); // skips the overloaded (503) model and the 404 one
   assert.ok(seen[0].body.tools[0].functionDeclarations.every((f: any) => !JSON.stringify(f).includes("additionalProperties")));
+  assert.equal(seen[0].body.generationConfig.thinkingConfig.thinkingLevel, "low");
   assert.equal(seen[1].body.contents[1].parts[0].thoughtSignature, "sig1"); // thought signature sent back unchanged
   const chat2 = await runAnalyst("test-session", "And now?", "2025-04-20");
   assert.equal(seen[2].body.contents.length, 5); // follow-up carries the earlier turn's history

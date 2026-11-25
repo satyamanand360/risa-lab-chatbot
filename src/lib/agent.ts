@@ -222,7 +222,12 @@ type Content = { role: "user" | "model"; parts: Part[] };
 
 class GeminiError extends Error { constructor(public status: number, message: string) { super(message); } }
 
-async function callModel(model: string, contents: Content[], system: string, key: string) {
+const noThinkingConfig = new Set<string>();
+
+async function callModel(model: string, contents: Content[], system: string, key: string): Promise<any> {
+  // Gemini 3 models think at length by default, which made each chat turn take a minute or more.
+  // The analyst's work is tool lookups and arithmetic, so low thinking is enough.
+  const thinking = /^gemini-3/.test(model) && !noThinkingConfig.has(model) ? { thinkingConfig: { thinkingLevel: "low" } } : {};
   const base = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
   const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
@@ -233,10 +238,14 @@ async function callModel(model: string, contents: Content[], system: string, key
       contents,
       tools: [{ functionDeclarations }],
       toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-      generationConfig: { maxOutputTokens: 8192 },
+      generationConfig: { maxOutputTokens: 8192, ...thinking },
     }),
   });
   const body: any = await res.json().catch(() => ({}));
+  if (!res.ok && res.status === 400 && "thinkingConfig" in thinking && /think/i.test(body?.error?.message ?? "")) {
+    noThinkingConfig.add(model); // this model rejects the setting: call it again without
+    return callModel(model, contents, system, key);
+  }
   if (!res.ok) throw new GeminiError(res.status, body?.error?.message ?? `HTTP ${res.status}`);
   return body;
 }
