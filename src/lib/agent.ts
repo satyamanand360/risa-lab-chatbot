@@ -5,9 +5,10 @@ import { runPlan, PRESETS, PlanInputs } from "./plan";
 
 // Tried in order. A model that returns 404 (retired, or closed to new projects) is skipped,
 // and the first one that answers is remembered for later requests.
-const DEFAULT_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+// gemini-3.6-flash goes first: on the live free-tier key it answered while the alias and 3.8 hung or were overloaded.
+const DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
 let workingModel: string | null = null;
-const CALL_TIMEOUT_MS = 45_000;
+const CALL_TIMEOUT_MS = 30_000;
 /** What happened on the last failed attempt per model, shown when every model fails. */
 let lastFailures: string[] = [];
 const MAX_STEPS = 10;
@@ -262,7 +263,8 @@ async function generate(contents: Content[], system: string, key: string) {
         // 404: model closed to this key. 429: free-tier quota is per model. 5xx: model overloaded.
         if (![404, 429, 500, 502, 503, 504].includes(st)) throw lastErr;
         console.warn(`Gemini model ${model} returned ${st}: ${(lastErr as Error).message}`);
-        if (st >= 500 && attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
+        // Retry a quick overload once; a call that timed out has already cost too long, so move on.
+        if (st >= 500 && !timedOut && attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
         if (workingModel === model) workingModel = null;
         break;
       }
