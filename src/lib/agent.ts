@@ -3,7 +3,10 @@ import { q, q1, readOnly } from "./db";
 import { overview, recommend, bottlenecks, campaignDetail, listTasks, getMeta, ASSUMPTIONS, cutoff, dataQuality, addDays } from "./metrics";
 import { runPlan, PRESETS, PlanInputs } from "./plan";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// Tried in order. A model that returns 404 (retired, or closed to new projects) is skipped,
+// and the first one that answers is remembered for later requests.
+const DEFAULT_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
+let workingModel: string | null = null;
 const MAX_STEPS = 10;
 
 export type Proposal =
@@ -215,9 +218,8 @@ type Content = { role: "user" | "model"; parts: Part[] };
 
 class GeminiError extends Error { constructor(public status: number, message: string) { super(message); } }
 
-async function generate(contents: Content[], system: string, key: string) {
+async function callModel(model: string, contents: Content[], system: string, key: string) {
   const base = process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
-  const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
   const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
@@ -226,12 +228,31 @@ async function generate(contents: Content[], system: string, key: string) {
       contents,
       tools: [{ functionDeclarations }],
       toolConfig: { functionCallingConfig: { mode: "AUTO" } },
-      generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+      generationConfig: { maxOutputTokens: 8192 },
     }),
   });
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) throw new GeminiError(res.status, body?.error?.message ?? `HTTP ${res.status}`);
   return body;
+}
+
+async function generate(contents: Content[], system: string, key: string) {
+  const configured = process.env.GEMINI_MODEL?.trim();
+  const order = [...new Set([workingModel, configured, ...DEFAULT_MODELS].filter(Boolean) as string[])];
+  let lastErr: unknown;
+  for (const model of order) {
+    try {
+      const body = await callModel(model, contents, system, key);
+      workingModel = model;
+      return body;
+    } catch (e) {
+      lastErr = e;
+      if (!(e instanceof GeminiError && e.status === 404)) throw e;
+      console.warn(`Gemini model ${model} unavailable (404), trying the next one`);
+      if (workingModel === model) workingModel = null;
+    }
+  }
+  throw lastErr;
 }
 
 export async function runAnalyst(sessionId: string, userText: string, asOf: string, displayUser = userText): Promise<ChatResult> {

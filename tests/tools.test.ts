@@ -54,7 +54,9 @@ const run = (n: string, i: any = {}) => execTool(n, i, ctx) as Promise<any>;
   const seen: any[] = [];
   const server = http.createServer((req, res) => {
     let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => {
-      const body = JSON.parse(b); seen.push({ url: req.url, key: req.headers["x-goog-api-key"], body });
+      const body = JSON.parse(b);
+      if (req.url!.includes("gemini-flash-latest")) { res.statusCode = 404; res.end(JSON.stringify({ error: { message: "not found" } })); return; }
+      seen.push({ url: req.url, key: req.headers["x-goog-api-key"], body });
       const last = body.contents[body.contents.length - 1];
       const reply = last.parts[0].functionResponse
         ? { candidates: [{ content: { role: "model", parts: [{ text: `Attendees: ${last.parts[0].functionResponse.response.totals.attendees}` }] }, finishReason: "STOP" }] }
@@ -67,7 +69,7 @@ const run = (n: string, i: any = {}) => execTool(n, i, ctx) as Promise<any>;
   process.env.GEMINI_API_KEY = "test-key";
   const chat = await runAnalyst("test-session", "How many attendees?", "2025-04-20");
   assert.equal(chat.text, "Attendees: 2051"); assert.equal(chat.toolsUsed[0].name, "get_overview");
-  assert.equal(seen.length, 2); assert.equal(seen[0].key, "test-key"); assert.match(seen[0].url, /gemini-2\.5-flash:generateContent$/);
+  assert.equal(seen.length, 2); assert.equal(seen[0].key, "test-key"); assert.match(seen[0].url, /gemini-3\.8-flash:generateContent$/); // falls through the 404 alias to the next model
   assert.ok(seen[0].body.tools[0].functionDeclarations.every((f: any) => !JSON.stringify(f).includes("additionalProperties")));
   assert.equal(seen[1].body.contents[1].parts[0].thoughtSignature, "sig1"); // thought signature sent back unchanged
   const chat2 = await runAnalyst("test-session", "And now?", "2025-04-20");

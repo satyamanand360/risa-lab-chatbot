@@ -25,11 +25,12 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 const div = (a: number, b: number) => (b ? a / b : null);
 
 export async function getMeta() {
-  const ev = await q1<any>(`SELECT name, history_start, history_end, starts_at, ends_at FROM event WHERE id=1`);
-  const campaigns = await q<any>(`SELECT id, name, channel, owner_name, status FROM campaigns ORDER BY id`);
-  const maxData = await q1<any>(`SELECT GREATEST(
-      (SELECT max(activity_date) FROM daily_marketing), (SELECT max(registered_at)::date FROM registrations), (SELECT max(occurred_at)::date FROM checkins)) AS d`);
-  const owners = await q<any>(`SELECT DISTINCT owner_name FROM campaigns WHERE owner_name IS NOT NULL ORDER BY 1`);
+  const [ev, campaigns, maxData, owners] = await Promise.all([
+    q1<any>(`SELECT name, history_start, history_end, starts_at, ends_at FROM event WHERE id=1`),
+    q<any>(`SELECT id, name, channel, owner_name, status FROM campaigns ORDER BY id`),
+    q1<any>(`SELECT GREATEST(
+      (SELECT max(activity_date) FROM daily_marketing), (SELECT max(registered_at)::date FROM registrations), (SELECT max(occurred_at)::date FROM checkins)) AS d`),
+    q<any>(`SELECT DISTINCT owner_name FROM campaigns WHERE owner_name IS NOT NULL ORDER BY 1`)]);
   return {
     event: { name: ev.name, historyStart: ev.history_start as string, historyEnd: ev.history_end as string, startsAt: new Date(ev.starts_at).toISOString(), endsAt: new Date(ev.ends_at).toISOString(), startDate: istDate(ev.starts_at), endDate: istDate(ev.ends_at) },
     latestDataDate: (maxData?.d as string) ?? ev.history_end,
@@ -100,10 +101,8 @@ export async function campaignTable(asOf: string): Promise<CampaignRow[]> {
 
 export async function overview(asOf: string) {
   const c = cutoff(asOf);
-  const meta = await getMeta();
-  const target = await targetAt(asOf);
-  const camps = await campaignTable(asOf);
-  const totals = await q1<any>(`
+  // Independent queries run in parallel: on a hosted Postgres each round trip costs real latency.
+  const [meta, target, camps, totals] = await Promise.all([getMeta(), targetAt(asOf), campaignTable(asOf), q1<any>(`
     WITH regs AS (${REGS_SQL}), att AS (${ATTENDEES_SQL})
     SELECT
       (SELECT count(*) FROM people WHERE person_type='external' AND first_seen_at <= $1) AS people,
@@ -123,7 +122,7 @@ export async function overview(asOf: string) {
       (SELECT COALESCE(sum(registration_starts),0) FROM daily_marketing WHERE activity_date <= $2::date) AS registration_starts,
       (SELECT count(*) FROM daily_marketing WHERE activity_date <= $2::date AND spend_inr < 0) AS credit_rows,
       (SELECT count(*) FROM registrations r WHERE r.registered_at > $1::timestamptz - interval '14 days' AND r.registered_at <= $1
-         AND EXISTS (SELECT 1 FROM people p WHERE p.person_id=r.person_id AND p.person_type='external')) AS regs_last14`, [c, asOf]);
+         AND EXISTS (SELECT 1 FROM people p WHERE p.person_id=r.person_id AND p.person_type='external')) AS regs_last14`, [c, asOf])]);
   const t = target.current;
   const phase = asOf < meta.event.startDate ? "pre" : asOf <= meta.event.endDate ? "during" : "post";
   const daysToEvent = Math.max(0, daysBetween(asOf, meta.event.startDate));
