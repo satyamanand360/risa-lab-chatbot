@@ -1,4 +1,4 @@
-# Growth Center: attendee growth for a Bengaluru college festival
+# Growth Center: attendee growth for a Bengaluru college festival (Satyam Anand 22IE35003)
 
 RISA Labs Growth APM assignment by **Satyam Anand (22IE35003)**. **Challenge A (attendee growth)**, city **Bengaluru**.
 
