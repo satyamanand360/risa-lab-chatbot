@@ -7,6 +7,9 @@ import { runPlan, PRESETS, PlanInputs } from "./plan";
 // and the first one that answers is remembered for later requests.
 const DEFAULT_MODELS = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"];
 let workingModel: string | null = null;
+const CALL_TIMEOUT_MS = 45_000;
+/** What happened on the last failed attempt per model, shown when every model fails. */
+let lastFailures: string[] = [];
 const MAX_STEPS = 10;
 
 export type Proposal =
@@ -223,6 +226,7 @@ async function callModel(model: string, contents: Content[], system: string, key
   const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+    signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: system }] },
       contents,
@@ -240,18 +244,23 @@ async function generate(contents: Content[], system: string, key: string) {
   const configured = process.env.GEMINI_MODEL?.trim();
   const order = [...new Set([workingModel, configured, ...DEFAULT_MODELS].filter(Boolean) as string[])];
   let lastErr: unknown;
+  lastFailures = [];
+  const started = Date.now();
   for (const model of order) {
+    if (Date.now() - started > 120_000) break;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const body = await callModel(model, contents, system, key);
         workingModel = model;
         return body;
-      } catch (e) {
-        lastErr = e;
-        const st = e instanceof GeminiError ? e.status : 0;
+      } catch (e: any) {
+        const timedOut = e?.name === "TimeoutError" || e?.name === "AbortError";
+        lastErr = timedOut ? new GeminiError(504, `no answer within ${CALL_TIMEOUT_MS / 1000}s`) : e;
+        const st = lastErr instanceof GeminiError ? lastErr.status : 0;
+        lastFailures.push(`${model}: ${st || "network"} ${String((lastErr as Error)?.message ?? "").slice(0, 120)}`);
         // 404: model closed to this key. 429: free-tier quota is per model. 5xx: model overloaded.
-        if (![404, 429, 500, 502, 503, 504].includes(st)) throw e;
-        console.warn(`Gemini model ${model} returned ${st}: ${(e as Error).message}`);
+        if (![404, 429, 500, 502, 503, 504].includes(st)) throw lastErr;
+        console.warn(`Gemini model ${model} returned ${st}: ${(lastErr as Error).message}`);
         if (st >= 500 && attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
         if (workingModel === model) workingModel = null;
         break;
@@ -288,14 +297,15 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
     try {
       body = await generate(contents, system, key);
     } catch (e) {
-      console.error(e);
+      console.error(e, lastFailures);
       const st = e instanceof GeminiError ? e.status : 0;
       const msg = st === 429 ? "The free Gemini quota is used up for the moment. Wait a minute and try again."
         : st === 400 && /api key/i.test((e as Error).message) ? "The GEMINI_API_KEY on the server was rejected."
         : st === 401 || st === 403 ? "The GEMINI_API_KEY on the server was rejected or lacks access to this model."
         : st >= 500 ? "Gemini is overloaded right now on every model this app tries. Wait a minute and ask again."
         : st ? `The AI service returned an error (${st}).` : "Couldn't reach the AI service.";
-      return { text: finalText ? `${finalText}\n\n(${msg})` : msg, toolsUsed, proposals: ctx.proposals, error: "api" };
+      const detail = lastFailures.length ? `\n\nModels tried:\n${lastFailures.map((f) => `- ${f}`).join("\n")}` : "";
+      return { text: (finalText ? `${finalText}\n\n(${msg})` : msg) + detail, toolsUsed, proposals: ctx.proposals, error: "api" };
     }
     const cand = body?.candidates?.[0];
     if (!cand?.content?.parts?.length) {
