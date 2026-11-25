@@ -241,15 +241,21 @@ async function generate(contents: Content[], system: string, key: string) {
   const order = [...new Set([workingModel, configured, ...DEFAULT_MODELS].filter(Boolean) as string[])];
   let lastErr: unknown;
   for (const model of order) {
-    try {
-      const body = await callModel(model, contents, system, key);
-      workingModel = model;
-      return body;
-    } catch (e) {
-      lastErr = e;
-      if (!(e instanceof GeminiError && e.status === 404)) throw e;
-      console.warn(`Gemini model ${model} unavailable (404), trying the next one`);
-      if (workingModel === model) workingModel = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const body = await callModel(model, contents, system, key);
+        workingModel = model;
+        return body;
+      } catch (e) {
+        lastErr = e;
+        const st = e instanceof GeminiError ? e.status : 0;
+        // 404: model closed to this key. 429: free-tier quota is per model. 5xx: model overloaded.
+        if (![404, 429, 500, 502, 503, 504].includes(st)) throw e;
+        console.warn(`Gemini model ${model} returned ${st}: ${(e as Error).message}`);
+        if (st >= 500 && attempt === 0) { await new Promise((r) => setTimeout(r, 1200)); continue; }
+        if (workingModel === model) workingModel = null;
+        break;
+      }
     }
   }
   throw lastErr;
@@ -287,6 +293,7 @@ export async function runAnalyst(sessionId: string, userText: string, asOf: stri
       const msg = st === 429 ? "The free Gemini quota is used up for the moment. Wait a minute and try again."
         : st === 400 && /api key/i.test((e as Error).message) ? "The GEMINI_API_KEY on the server was rejected."
         : st === 401 || st === 403 ? "The GEMINI_API_KEY on the server was rejected or lacks access to this model."
+        : st >= 500 ? "Gemini is overloaded right now on every model this app tries. Wait a minute and ask again."
         : st ? `The AI service returned an error (${st}).` : "Couldn't reach the AI service.";
       return { text: finalText ? `${finalText}\n\n(${msg})` : msg, toolsUsed, proposals: ctx.proposals, error: "api" };
     }
