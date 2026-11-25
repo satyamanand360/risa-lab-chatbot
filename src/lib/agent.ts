@@ -5,8 +5,9 @@ import { runPlan, PRESETS, PlanInputs } from "./plan";
 
 // Tried in order. A model that returns 404 (retired, or closed to new projects) is skipped,
 // and the first one that answers is remembered for later requests.
-// gemini-3.6-flash goes first: on the live free-tier key it answered while the alias and 3.8 hung or were overloaded.
-const DEFAULT_MODELS = ["gemini-3.6-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-flash-latest", "gemini-2.5-flash"];
+// gemini-3.5-flash-lite goes first: on the live free-tier key it answered in seconds and grounded its answers,
+// while 3.6 and 3.8 Flash often hung past the timeout and the alias was overloaded.
+const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"];
 let workingModel: string | null = null;
 const CALL_TIMEOUT_MS = 30_000;
 /** What happened on the last failed attempt per model, shown when every model fails. */
